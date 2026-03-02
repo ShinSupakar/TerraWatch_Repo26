@@ -1,0 +1,21 @@
+services:
+  terrawatch-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: terrawatch-backend
+    ports:
+      - "8000:8000"
+    environment:
+      LOG_LEVEL: INFO
+      TERRAWATCH_DATA_DIR: /app/data
+      USGS_CACHE_CSV: /app/data/usgs_catalog.csv
+      AFTERSHOCK_MODEL_PATH: /app/aftershock_transformer_scripted.pt
+      TERRAWATCH_MODEL_ROOT: /app/terrawatch/models
+      ESRGAN_WEIGHTS_PATH: /app/terrawatch/RealESRGAN_x4plus.pth
+      USGS_POLL_SECONDS: 180
+      LIVE_CATALOG_HOURS: 48
+      DISABLE_TORCH: 0
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped

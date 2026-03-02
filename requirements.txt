@@ -1,0 +1,12 @@
+fastapi==0.116.1
+uvicorn[standard]==0.35.0
+pydantic==2.11.7
+httpx==0.28.1
+numpy==2.2.6
+pandas==2.3.2
+python-multipart==0.0.20
+Pillow==11.3.0
+torch==2.8.0
+ultralytics==8.3.169
+realesrgan==0.3.0
+basicsr==1.4.2

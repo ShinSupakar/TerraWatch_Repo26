@@ -1,0 +1,23 @@
+# Python virtual environment
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Logs
+.run/
+runs/
+*.log
+
+# Mac files
+.DS_Store
+
+# VS Code settings
+.vscode/
+
+# Large ML model files (IMPORTANT)
+*.pt
+*.pth
+*.ckpt
+*.onnx
