@@ -1,23 +1,66 @@
 # Python virtual environment
 .venv/
+venv/
+env/
 
 # Python cache
 __pycache__/
 *.pyc
+*.pyo
+*.egg-info/
+.eggs/
+dist/
+build/
 
-# Logs
+# Jupyter Notebook
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Logs and runs
 .run/
 runs/
+logs/
 *.log
 
 # Mac files
 .DS_Store
+.AppleDouble
+.LSOverride
 
 # VS Code settings
 .vscode/
+.idea/
 
-# Large ML model files (IMPORTANT)
+# Large ML model files (IMPORTANT - Keep models out of git)
 *.pt
 *.pth
 *.ckpt
 *.onnx
+*.h5
+*.pb
+*.tflite
+
+# Training datasets (CRITICAL - 4.2GB+)
+terrawatch/data/
+data/raw/
+data/processed/
+
+# Model checkpoints and trained weights
+terrawatch/models/
+checkpoints/
+
+# Node dependencies
+frontend/node_modules/
+node_modules/
+
+# Build artifacts
+frontend/dist/
+*.egg
+
+# OS-specific
+Thumbs.db
