@@ -12,6 +12,14 @@ if [[ -f .env ]]; then
   set +a
 fi
 
+# try to pull any missing large model weights
+if [[ -x scripts/fetch_weights.sh ]]; then
+  echo "[setup] fetching model weights (if absent)"
+  bash scripts/fetch_weights.sh || true
+else
+  echo "[setup] fetch_weights.sh not found or not executable; skip"
+fi
+
 if [[ ! -x .venv/bin/python ]]; then
   echo "[setup] creating Python virtualenv..."
   python3 -m venv .venv

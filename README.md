@@ -36,6 +36,17 @@ Production-style FastAPI backend for TerraWatch disaster prediction and response
 
 ## Quick Start (Docker)
 
+> **Pre‑build step:** ensure the weight files exist locally. Run the asset
+> checker (which will auto‑fetch the ESRGAN model if missing) or invoke the
+> fetch script directly:
+>
+> ```bash
+> bash scripts/check_assets.py   # or: bash scripts/fetch_weights.sh
+> ```
+>
+> The Dockerfile copies these files into the image, so the build will fail if
+> they are absent.
+
 ```bash
 docker compose up --build
 ```
@@ -94,9 +105,38 @@ To stop:
 ### Required Model/Data Asset Locations
 
 - `./aftershock_transformer_scripted.pt` (aftershock TorchScript model)
-- `./terrawatch/RealESRGAN_x4plus.pth` (image enhancement model)
 - `./terrawatch/models/enhanced_yolov8n/weights/best.pt` (preferred detector)
 - `./terrawatch/models/baseline_yolov8n/weights/best.pt` (fallback detector)
+
+> **Note:** `RealESRGAN_x4plus.pth` is large (~**25 MB**) and is **not** checked into
+> version control. The backend will operate with a lightweight stub if it is absent.
+> You can obtain the file in one of three ways:
+>
+> 1. Run the helper script included in the repo:
+>    ```bash
+>    bash scripts/fetch_weights.sh
+>    ```
+>    (it uses `curl`/`wget` and honours `ESRGAN_URL` for alternative sources)
+> 2. Download manually from the
+>    [Real-ESRGAN release page](https://github.com/xinntao/Real-ESRGAN/releases)
+>    (look for `RealESRGAN_x4plus.pth`) and place it in `./terrawatch/`
+> 3. Set the environment variable `ESRGAN_WEIGHTS_PATH` to wherever you saved it.
+>
+> The `.env.example` includes that variable with a default pointing inside `terrawatch`.
+> Modify it if you keep the file elsewhere.
+
+### Convenience scripts
+
+* `scripts/check_assets.py` – verifies required/optional models and hints about
+  missing weights (invokes fetch script when helpful).
+* `scripts/fetch_weights.sh` – downloads Real-ESRGAN weights; run it before
+  starting the service or as part of `./start_all.sh`.
+
+### Optional / training assets
+
+- `./aftershock_transformer.pt`
+- `./best_transformer.pt`
+- etc. (see `scripts/check_assets.py`)
 
 ## Local Frontend Development (React + Vite)
 
