@@ -64,3 +64,11 @@ frontend/dist/
 
 # OS-specific
 Thumbs.db
+
+# Training visualization images
+terrawatch/models/**/*.jpg
+terrawatch/models/**/*.png
+
+# Demo/sample images (optional - only if you want to reduce size further)
+terrawatch/inference_demo.png
+terrawatch/sample_images.png
