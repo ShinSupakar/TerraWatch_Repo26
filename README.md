@@ -5,188 +5,149 @@ TerraWatch is a high-fidelity disaster response system designed to provide actio
 
 ---
 
-## 🚀 Key Platform Features
+## � Architecture Overview
+TerraWatch uses a multi-layered architecture designed for resilience in low-connectivity environments.
+
+```mermaid
+graph TD
+    subgraph "Field / Edge (PWA)"
+        A[Offline Field Report] --> B(IndexedDB Queue)
+        B --> C{Online?}
+        C -- Yes --> D[API Sync - /api/report]
+    }
+
+    subgraph "Data Ingest (Backend)"
+        E[Live CCTV Feed] -- Socket/Video --> F[FastAPI /api/damage/video]
+        G[USGS ComCat] -- Poll 60s --> H[Geophysics Hazard Engine]
+        I[WorldPop Rasters] -- Overlay --> J[Exposure Assessment]
+    }
+
+    subgraph "AI Inference Layer"
+        D & F --> K[YOLOv8 Damage Detection]
+        H --> L[Aftershock Transformer]
+        K --> M[ESRGAN Super-Res]
+    }
+
+    subgraph "Command HQ Dashboard"
+        J & L & M --> N[Real-time Leaflet Map]
+        N --> O[Rescue Priority Queue]
+        O --> P[Layman Public Brief]
+    }
+```
+
+---
+
+## ⏳ Evolution of Response: The Four Stages
+TerraWatch is designed to scale its data confidence as an incident progresses through four distinct operational stages:
+
+| **Stage** | **Timeframe** | **Data Source** | **Visualized Content** | **Confidence Label** |
+| :--- | :--- | :--- | :--- | :--- |
+| **Stage 1** | T+0 to T+5min | USGS + WorldPop | ShakeMap intensity grid & demographic exposure estimates. | **IMPACT ESTIMATE — Population model only.** |
+| **Stage 2** | T+5 to T+30min | CCTV / IP Feeds | Building-level damage counts processed from existing camera networks. | **PARTIAL ASSESSMENT — Camera coverage only.** |
+| **Stage 3** | T+1hr to T+6hr | PWA Field Reports | GPS-tagged, human-verified damage reports from responders in the zone. | **FIELD VERIFIED — Responder reports.** |
+| **Stage 4** | T+6hr to T+48hr | Satellite + ML | Full-region high-res assessment processed via ESRGAN + YOLOv8n. | **FULL ASSESSMENT — Satellite + ML pipeline.** |
+
+---
+
+## 📁 Project Structure
+```text
+.
+├── backend.py                   # FastAPI / AI Logic
+├── data/                        # USGS Catalogs & Field Reports
+│   └── usgs_catalog.csv
+├── frontend/                    # React / Vite / PWA Source
+│   ├── src/App.jsx              # Main Dashboard
+│   ├── src/ShakeMapViewer.jsx   # Leaflet Map Engine
+│   └── src/offlineSync.js       # PWA IndexedDB Logic
+├── scripts/                     # Asset Management
+│   ├── check_assets.py
+│   └── fetch_weights.sh
+├── terrawatch/                  # AI Weight Storage & ML Specs
+│   └── models/
+├── Dockerfile                   # Containerization
+├── docker-compose.yml           # Local Cluster orchestration
+├── README.md                    # Platform Documentation
+└── *.mp4                        # High-fidelity Demo CCTV Footage
+```
+
+---
+
+## �🚀 Key Platform Features
 
 ### 1. ⚡ Live ShakeMap & Demographic Exposure (Real-Time)
 - **Automatic Polling:** Background tasks monitor the USGS ComCat feed every 60s for new M5+ events.
 - **Dynamic Shaking Overlays:** Automatically fetches/generates ShakeMap grids.
-- **WorldPop Integration:** Cross-references intensity polygons with global 100m population density data to estimate "Estimated Exposed Population" within minutes of an event.
+- **WorldPop Integration:** Cross-references intensity polygons with global 100m population density data to estimate people exposed in minutes.
 - **Interactive Heatmap:** Custom Leaflet-powered engine renders seismic intensity as color-coded polygons.
 
 ### 2. 📹 CCTV & Video Damage Assessment (Computer Vision)
 - **Multimodal Inference:** Upload Recorded CCTV footage to detect structural damage.
 - **YOLOv8n Triage:** Identifies `Destroyed`, `Major Damage`, and `Minor Damage` to feed the Rescue Priority Queue.
-- **Demo Ready:** Curated video assets for Turkey, Nepal, and Japan are included.
+- **Demo Assets:** Pre-rendered footage from Turkey, Nepal, and Japan included.
 
 ### 3. 📵 Offline-First PWA (Resilient Field Mode)
-- **Installable Native UI:** Standalone PWA experience for mobile responders.
+- **Installable Native UI:** Standalone PWA experience (Installable to Home Screen).
 - **IndexedDB Sync Engine:** Queue damage reports in "Signal-Zero" zones that automatically synchronize upon connection return.
 - **Service Worker Caching:** Zero-latency UI loading during network collapse.
 
 ---
 
-## 🏗 System Architecture & Design
-
-### Design Philosophy: Resilience by Design
-TerraWatch is built to be **Resilient**. Every AI component is designed with a "Deterministic Fallback" mode. If weights (YOLO, ESRGAN) are missing or the system is under compute load, it gracefully degrades to physics-based stubs, ensuring the Command HQ never goes blind.
-
-### Tech Stack
-- **Backend:** FastAPI (Python), Uvicorn, Asyncio, Httpx.
-- **AI/ML:** PyTorch (Aftershock Transformer), Ultralytics (YOLOv8), Real-ESRGAN (Super-Res).
-- **Geospatial:** Leaflet, GeoJSON, WorldPop Density Rasters.
-- **Frontend:** React, Vite, Workbox (PWA), IndexedDB (IDB).
-
----
-
-## 📁 Project Files
-
-- `backend.py`: FastAPI application containing all geophysical and AI service logic.
-- `requirements.txt`: Python dependencies.
-- `Dockerfile`: Container build for the consolidated backend.
-- `docker-compose.yml`: One-command local deployment.
-- `start_all.sh` / `stop_all.sh`: Helper scripts for local process management.
+## 🏗 System Architecture & Design Choices
+- **Design Philosophy: Resilience by Design**: Every AI component is designed with a "Deterministic Fallback" mode. If weights (YOLO, ESRGAN) are missing, the backend switches to physics-based stubs, ensuring CQHQ never goes blind.
+- **Tech Stack**:
+  - **Backend**: FastAPI, Asyncio, Httpx.
+  - **AI/ML**: PyTorch (Transformer), Ultralytics (YOLOv8), Real-ESRGAN.
+  - **Frontend**: React, Vite, Workbox (PWA), Leaflet.
 
 ---
 
 ## 🐳 Quick Start (Docker)
 
-> **Pre‑build step:** Ensure the weight files exist locally. Run the asset checker (which auto-fetches the ESRGAN model if missing) or invoke the fetch script directly:
->
-> ```bash
-> bash scripts/check_assets.py   # or: bash scripts/fetch_weights.sh
-> ```
->
-> The Dockerfile copies these files into the image; the build will fail if they are absent.
-
 ```bash
+# Ensure weights exist locally
+bash scripts/check_assets.py
 docker compose up --build
 ```
-
-- **Backend URL:** `http://localhost:8000`
-- **Frontend URL (Served by FastAPI):** `http://localhost:8000/`
-- **Health Check:** `GET http://localhost:8000/health`
-
-**Docker image bundles:**
-- Frontend static build (`frontend/dist`)
-- `aftershock_transformer_scripted.pt`
-- YOLO weights (`terrawatch/models/.../weights/best.pt`)
-- Real-ESRGAN weights (`terrawatch/RealESRGAN_x4plus.pth`)
+- **Backend/Frontend Root:** `http://localhost:8000`
+- **Health Check:** `GET /health`
 
 ---
 
 ## 💻 Local Run in VS Code (Recommended)
-
-1. Open the project root folder in VS Code.
-2. Copy `.env.example` to `.env`.
-3. Run task: `Python: Create venv`.
-4. Run task: `Python: Install backend deps`.
-5. Run task: `Frontend: Install deps`.
-6. (Optional sanity check) run: `python3 scripts/check_assets.py`
-
-7. **Start Backend:**
-   - Launch config: `TerraWatch Backend (uvicorn)`
-   - or task: `Backend: Run uvicorn`
-
-8. **Open `http://127.0.0.1:8000`**
-
-Separate Frontend Run: `Frontend: Run dev server` (`http://127.0.0.1:5173`).
-
-### One-Command Local Start
-```bash
-./start_all.sh
-```
-*Logs available in `.run/backend.log` and `.run/frontend.log`.*
-
----
-
-## 🧠 Required Model & Asset Locations
-
-- `./aftershock_transformer_scripted.pt` (TorchScript aftershock model)
-- `./terrawatch/models/enhanced_yolov8n/weights/best.pt` (Preferred detector)
-- `./terrawatch/models/baseline_yolov8n/weights/best.pt` (Fallback detector)
-
-> **Note:** Real-ESRGAN weights (~25MB) are not checked in. You can obtain them via:
-> 1. `bash scripts/fetch_weights.sh`
-> 2. Manual download to `./terrawatch/RealESRGAN_x4plus.pth`
-
----
-
-## 🛠 Convenience & Scaling
-
-- **`scripts/check_assets.py`**: Verifies required models and hints about missing weights.
-- **`scripts/fetch_weights.sh`**: Downloads Real-ESRGAN and YOLO weights if missing.
-
-### Local Frontend Development (React + Vite)
-```bash
-cd frontend
-npm install
-npm run dev
-```
-- **Vite Dev Server:** `http://localhost:5173`
-- **Proxy:** Configured in `vite.config.js` to route `/api` and `/ws` to port 8000.
+1. Open root folder.
+2. Setup Venv & Install Deps (`requirements.txt`).
+3. Run `start_all.sh` to launch both servers.
+4. **Open `http://127.0.0.1:5173`**
 
 ---
 
 ## ⚙️ Environment Variables
-- `USGS_POLL_SECONDS` (default: `60`) - Frequency of real-time event checks.
-- `LIVE_CATALOG_HOURS` (default: `48`) - Rolling window for seismicity.
-- `YOLO_CONF_THRESHOLD` (default: `0.25`) - Detection sensitivity.
-- `AFTERSHOCK_MODEL_PATH` - Path to the `.pt` transformer.
+- `USGS_POLL_SECONDS` (default: `60`) - Real-time polling frequency.
+- `LIVE_CATALOG_HOURS` (default: `48`) - Historical seismicity window.
+- `ESRGAN_WEIGHTS_PATH` - Path to Super-Res model.
 
 ---
 
 ## 📡 Key API Endpoints
-
-### 🟢 Health & Live Feed
-- `GET /health`: Engine status and model load check.
-- `WS /ws/live`: Real-time incident stream.
-
-### ⚡ ShakeMap & Impact
-- `GET /api/shakemap/latest`: Returns latest M5+ event + impact assessment.
-- `GET /api/shakemap/{event_id}`: Returns GeoJSON grid of intensity × population.
-- `POST /api/impact/{event_id}`: Triggers population exposure calculation.
-
-### 📹 AI Assessment
+- `GET /api/shakemap/latest`: Returns current seismic event + impact.
+- `GET /api/shakemap/{event_id}`: Returns intensity grid × population.
 - `POST /api/damage/video`: Uploads CCTV for structural triage.
-- `POST /api/damage`: Endpoint for drone/satellite image enhancement.
-
-### 📵 Mobile/PWA
 - `POST /api/report`: Accepts multi-part field reports from offline responders.
 
 ---
 
-## 🗒 Example Requests
-
-### Aftershock Forecast
-```bash
-curl -X POST http://localhost:8000/api/aftershock \
-  -H "Content-Type: application/json" \
-  -d '{
-    "mainshock": {"magnitude": 6.7, "latitude": 37.65, "longitude": -122.45},
-    "historical_seismicity_48h": [0,1,0,2... (48 integers)]
-  }'
-```
-
----
-
 ## 🛡 Resilient Implementation & Fallbacks
-
-The system is designed to run immediately while supporting production-grade upgrades.
-- **Feature Robustness**: If the YOLO model fails to load, the backend switches to a **Deterministic Demo Output** so the UI remains functional for the commander.
-- **Geographic Resilience**: If certain regional fault data is missing, the Hazard Engine uses physics-based **Joyner-Boore point-source stubs** to continue providing risk estimates.
+- **Feature Robustness**: If the YOLO model fails to load, the backend switches to a **Deterministic Demo Output** so the UI remains functional.
 - **PWA Offlining**: The Workbox service worker will serve cached content if the backend is unreachable.
 
 ---
 
 ## 🏗 Future Production Scaling
-- **Population Density**: Replace stub with real-time Raster cell lookups against the WorldPop API.
-- **Fault Geometry**: Integrate real-time fault distance against OSM/GEM datasets.
-- **LLM Safety Briefs**: Replace stubs with Llama 3 on-edge to provide localized instructions based on intensity.
+- **Raster Integration**: Moving from stubs to live WorldPop API cell lookups.
+- **LLM Safety Briefs**: Integrating Llama 3 on-edge for localized risk summaries based on intensity.
 
 ## 🧪 Testbench
-See documentation in:
-- `testbench/SETUP_AND_RUN.md`
-- `testbench/INFERENCE_TESTS.md`
+Required testing documentation found in `testbench/`.
 
 ---
 *TerraWatch — Scaling response beyond the signal.*
