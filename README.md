@@ -5,27 +5,27 @@ TerraWatch is a high-fidelity disaster response system designed to provide actio
 
 ---
 
-## 🚀 Key Platform Features
+## Key Platform Features
 
-### 1. ⚡ Live ShakeMap & Demographic Exposure (Real-Time)
+### 1. Live ShakeMap & Demographic Exposure (Real-Time)
 - **Automatic Polling:** Background tasks monitor the USGS ComCat feed every 60s for new M5+ events.
 - **Dynamic Shaking Overlays:** Automatically fetches/generates ShakeMap grids.
 - **WorldPop Integration:** Cross-references intensity polygons with global 100m population density data to estimate "Estimated Exposed Population" within minutes of an event.
 - **Interactive Heatmap:** Custom Leaflet-powered engine renders seismic intensity as color-coded polygons.
 
-### 2. 📹 CCTV & Video Damage Assessment (Computer Vision)
+### 2. CCTV & Video Damage Assessment (Computer Vision)
 - **Multimodal Inference:** Upload Recorded CCTV footage to detect structural damage.
 - **YOLOv8n Triage:** Identifies `Destroyed`, `Major Damage`, and `Minor Damage` to feed the Rescue Priority Queue.
 - **Demo Ready:** Curated video assets for Turkey, Nepal, and Japan are included.
 
-### 3. 📵 Offline-First PWA (Resilient Field Mode)
+### 3. Offline-First PWA (Resilient Field Mode)
 - **Installable Native UI:** Standalone PWA experience for mobile responders.
 - **IndexedDB Sync Engine:** Queue damage reports in "Signal-Zero" zones that automatically synchronize upon connection return.
 - **Service Worker Caching:** Zero-latency UI loading during network collapse.
 
 ---
 
-## 🏗 System Architecture & Design
+## System Architecture & Design
 
 ### Design Philosophy: Resilience by Design
 TerraWatch is built to be **Resilient**. Every AI component is designed with a "Deterministic Fallback" mode. If weights (YOLO, ESRGAN) are missing or the system is under compute load, it gracefully degrades to physics-based stubs, ensuring the Command HQ never goes blind.
@@ -38,7 +38,7 @@ TerraWatch is built to be **Resilient**. Every AI component is designed with a "
 
 ---
 
-## 📁 Project Files
+## Project Files
 
 - `backend.py`: FastAPI application containing all geophysical and AI service logic.
 - `requirements.txt`: Python dependencies.
@@ -48,7 +48,7 @@ TerraWatch is built to be **Resilient**. Every AI component is designed with a "
 
 ---
 
-## 🐳 Quick Start (Docker)
+## Quick Start (Docker)
 
 > **Pre‑build step:** Ensure the weight files exist locally. Run the asset checker (which auto-fetches the ESRGAN model if missing) or invoke the fetch script directly:
 >
@@ -74,7 +74,7 @@ docker compose up --build
 
 ---
 
-## 💻 Local Run in VS Code (Recommended)
+## Local Run in VS Code (Recommended)
 
 1. Open the project root folder in VS Code.
 2. Copy `.env.example` to `.env`.
@@ -99,7 +99,7 @@ Separate Frontend Run: `Frontend: Run dev server` (`http://127.0.0.1:5173`).
 
 ---
 
-## 🧠 Required Model & Asset Locations
+## Required Model & Asset Locations
 
 - `./aftershock_transformer_scripted.pt` (TorchScript aftershock model)
 - `./terrawatch/models/enhanced_yolov8n/weights/best.pt` (Preferred detector)
@@ -111,7 +111,7 @@ Separate Frontend Run: `Frontend: Run dev server` (`http://127.0.0.1:5173`).
 
 ---
 
-## 🛠 Convenience & Scaling
+## Convenience & Scaling
 
 - **`scripts/check_assets.py`**: Verifies required models and hints about missing weights.
 - **`scripts/fetch_weights.sh`**: Downloads Real-ESRGAN and YOLO weights if missing.
@@ -127,7 +127,7 @@ npm run dev
 
 ---
 
-## ⚙️ Environment Variables
+## Environment Variables
 - `USGS_POLL_SECONDS` (default: `60`) - Frequency of real-time event checks.
 - `LIVE_CATALOG_HOURS` (default: `48`) - Rolling window for seismicity.
 - `YOLO_CONF_THRESHOLD` (default: `0.25`) - Detection sensitivity.
@@ -135,27 +135,27 @@ npm run dev
 
 ---
 
-## 📡 Key API Endpoints
+## Key API Endpoints
 
-### 🟢 Health & Live Feed
+### Health & Live Feed
 - `GET /health`: Engine status and model load check.
 - `WS /ws/live`: Real-time incident stream.
 
-### ⚡ ShakeMap & Impact
+### ShakeMap & Impact
 - `GET /api/shakemap/latest`: Returns latest M5+ event + impact assessment.
 - `GET /api/shakemap/{event_id}`: Returns GeoJSON grid of intensity × population.
 - `POST /api/impact/{event_id}`: Triggers population exposure calculation.
 
-### 📹 AI Assessment
+### AI Assessment
 - `POST /api/damage/video`: Uploads CCTV for structural triage.
 - `POST /api/damage`: Endpoint for drone/satellite image enhancement.
 
-### 📵 Mobile/PWA
+### Mobile/PWA
 - `POST /api/report`: Accepts multi-part field reports from offline responders.
 
 ---
 
-## 🗒 Example Requests
+## Example Requests
 
 ### Aftershock Forecast
 ```bash
@@ -169,7 +169,7 @@ curl -X POST http://localhost:8000/api/aftershock \
 
 ---
 
-## 🛡 Resilient Implementation & Fallbacks
+## Resilient Implementation & Fallbacks
 
 The system is designed to run immediately while supporting production-grade upgrades.
 - **Feature Robustness**: If the YOLO model fails to load, the backend switches to a **Deterministic Demo Output** so the UI remains functional for the commander.
@@ -178,15 +178,14 @@ The system is designed to run immediately while supporting production-grade upgr
 
 ---
 
-## 🏗 Future Production Scaling
+## Future Production Scaling
 - **Population Density**: Replace stub with real-time Raster cell lookups against the WorldPop API.
 - **Fault Geometry**: Integrate real-time fault distance against OSM/GEM datasets.
 - **LLM Safety Briefs**: Replace stubs with Llama 3 on-edge to provide localized instructions based on intensity.
 
-## 🧪 Testbench
+## Testbench
 See documentation in:
 - `testbench/SETUP_AND_RUN.md`
 - `testbench/INFERENCE_TESTS.md`
 
----
-*TerraWatch — Scaling response beyond the signal.*
+
