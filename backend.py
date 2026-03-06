@@ -894,11 +894,12 @@ def process_video_frames(
         
         # Track frame with worst damage
         frame_damage_count = len([b for b in boxes if b.damage_class >= 2])
-        if frame_damage_count > max_damage_count or (frame_damage_count == max_damage_count and max(([b.damage_class for b in boxes], default=0))):
+        max_damage_in_frame = max([b.damage_class for b in boxes], default=0)
+        if frame_damage_count > max_damage_count or (frame_damage_count == max_damage_count and max_damage_in_frame > 0):
             max_damage_count = frame_damage_count
             representative_frame_idx = frame_idx
         
-        max_class = max(([b.damage_class for b in boxes], default=0))
+        max_class = max([b.damage_class for b in boxes], default=0)
         if max_class > max_damage_class_overall:
             max_damage_class_overall = max_class
     
