@@ -101,6 +101,9 @@ function App() {
   const [countdownSec, setCountdownSec] = useState(INCIDENTS[0].baselineHours * 3600);
   const [uploadedFile, setUploadedFile] = useState(null);
   const [uploadedPreview, setUploadedPreview] = useState('');
+  const [videoFile, setVideoFile] = useState(null);
+  const [videoPreview, setVideoPreview] = useState('');
+  const [streamUrl, setStreamUrl] = useState('');
   const [analysisRunning, setAnalysisRunning] = useState(false);
   const [analysisDone, setAnalysisDone] = useState(false);
   const [stepIndex, setStepIndex] = useState(-1);
@@ -141,6 +144,16 @@ function App() {
     setImpact(null);
     setStatusLine(`Selected ${selectedIncident.name}. Timer running from ${selectedIncident.baselineHours} hours.`);
   }, [selectedIncident]);
+
+  useEffect(() => {
+    if (!videoFile) {
+      setVideoPreview('');
+      return;
+    }
+    const url = URL.createObjectURL(videoFile);
+    setVideoPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [videoFile]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -277,6 +290,39 @@ function App() {
     return res.json();
   }
 
+  async function callDamageVideo({ fast = true, timeoutMs = 30000 } = {}) {
+    if (!videoFile) return null;
+    const form = new FormData();
+    form.append('video', videoFile);
+    form.append('latitude', String(selectedIncident.lat));
+    form.append('longitude', String(selectedIncident.lon));
+    form.append('fast_mode', fast ? '1' : '0');
+
+    const res = await fetchWithTimeout(`${API_BASE}/api/damage/video`, {
+      method: 'POST',
+      body: form
+    }, timeoutMs);
+    if (!res.ok) throw new Error('video damage endpoint unavailable');
+    return res.json();
+  }
+
+  async function callDamageStream({ fast = true, timeoutMs = 45000 } = {}) {
+    if (!streamUrl) return null;
+    const form = new FormData();
+    form.append('stream_url', streamUrl);
+    form.append('latitude', String(selectedIncident.lat));
+    form.append('longitude', String(selectedIncident.lon));
+    form.append('fast_mode', fast ? '1' : '0');
+    form.append('frame_limit', '30');
+
+    const res = await fetchWithTimeout(`${API_BASE}/api/damage/stream`, {
+      method: 'POST',
+      body: form
+    }, timeoutMs);
+    if (!res.ok) throw new Error('stream damage endpoint unavailable');
+    return res.json();
+  }
+
   async function callLaymanSummary(payload) {
     const res = await fetchWithTimeout(`${API_BASE}/api/layman_summary`, {
       method: 'POST',
@@ -380,10 +426,15 @@ function App() {
     }, 1200);
 
     try {
+      // Determine which damage endpoint to use
+      const damageCall = videoFile ? callDamageVideo({ fast: true, timeoutMs: 30000 }) :
+        streamUrl ? callDamageStream({ fast: true, timeoutMs: 45000 }) :
+        callDamage({ fast: true, timeoutMs: 12000 });
+
       const [worstCaseResult, aftershockResult, damageResult] = await Promise.allSettled([
         callWorstCase(),
         callAftershock(),
-        callDamage({ fast: true, timeoutMs: 12000 })
+        damageCall
       ]);
 
       const worstCase = worstCaseResult.status === 'fulfilled' ? worstCaseResult.value : null;
@@ -391,8 +442,8 @@ function App() {
       const damageResp = damageResult.status === 'fulfilled' ? damageResult.value : null;
 
       if (damageResp?.damage_boxes?.length) {
-        const imgW = damageResp.image_width || 640;
-        const imgH = damageResp.image_height || 640;
+        const imgW = damageResp.image_width || damageResp.frame_dimensions?.[1] || 640;
+        const imgH = damageResp.image_height || damageResp.frame_dimensions?.[0] || 640;
         const scaled = damageResp.damage_boxes.slice(0, 12).map((b, idx) => {
           const x = ((b.x1 / imgW) * 100);
           const y = ((b.y1 / imgH) * 100);
@@ -417,6 +468,8 @@ function App() {
         setProcessedImage(`data:image/jpeg;base64,${damageResp.overlay_image_b64}`);
       } else if (damageResp?.enhanced_image_b64) {
         setProcessedImage(`data:image/jpeg;base64,${damageResp.enhanced_image_b64}`);
+      } else if (damageResp?.representative_frame_b64) {
+        setProcessedImage(`data:image/jpeg;base64,${damageResp.representative_frame_b64}`);
       }
 
       const aftershock24 = aftershockResp?.probabilities_m4_plus || [];
@@ -437,7 +490,7 @@ function App() {
       const queue = buildRescueQueue(damageResp || null, worstCase, aftershock24, impact);
       setRescueQueue(queue);
 
-      if (uploadedFile && ENABLE_REFINEMENT) {
+      if ((uploadedFile || videoFile || streamUrl) && ENABLE_REFINEMENT && uploadedFile) {
         setRefineStatus('running');
         setStatusLine('Fast triage complete. Generating ESRGAN-refined overlay in background...');
         callDamage({ fast: false, timeoutMs: 45000 })
@@ -497,8 +550,8 @@ function App() {
     }
   }
 
-  const beforeImage = uploadedPreview || `https://picsum.photos/seed/${selectedIncident.id}-before/1000/700`;
-  const afterImage = processedImage || uploadedPreview || `https://picsum.photos/seed/${selectedIncident.id}-after/1000/700`;
+  const beforeImage = uploadedPreview || videoPreview || `https://picsum.photos/seed/${selectedIncident.id}-before/1000/700`;
+  const afterImage = processedImage || uploadedPreview || videoPreview || `https://picsum.photos/seed/${selectedIncident.id}-after/1000/700`;
   const shakePolygons = Array.isArray(shakeMap?.polygons) ? shakeMap.polygons : [];
   const aftershockPeak = aftershock.length ? Math.max(...aftershock) : 0;
   const aftershockAvg = aftershock.length ? aftershock.reduce((a, b) => a + b, 0) / aftershock.length : 0;
@@ -558,10 +611,39 @@ function App() {
               />
               <span>{uploadedFile ? uploadedFile.name : 'Drop Copernicus EMS image or click to select'}</span>
             </label>
-            <button className="analyze-btn" onClick={runAnalysis} disabled={analysisRunning} type="button">
+            <button className="analyze-btn" onClick={runAnalysis} disabled={analysisRunning || !uploadedFile} type="button">
               {analysisRunning ? 'ANALYSIS IN PROGRESS' : 'ANALYSE'}
             </button>
             <p className="status-line">{statusLine}</p>
+          </div>
+
+          <div className="upload-block">
+            <h3>CCTV / Video Assessment</h3>
+            <label className="upload-zone">
+              <input
+                type="file"
+                accept="video/mp4,video/quicktime,video/x-msvideo,.mp4,.mov,.avi"
+                onChange={(e) => setVideoFile(e.target.files?.[0] || null)}
+              />
+              <span>{videoFile ? videoFile.name : 'Drop video (MP4/MOV/AVI) or click to select'}</span>
+            </label>
+            <button className="analyze-btn" onClick={runAnalysis} disabled={analysisRunning || !videoFile} type="button">
+              {analysisRunning ? 'ANALYSIS IN PROGRESS' : 'ANALYSE VIDEO'}
+            </button>
+          </div>
+
+          <div className="upload-block">
+            <h3>IP Camera Stream</h3>
+            <input
+              type="text"
+              placeholder="Enter RTSP or HTTP stream URL (rtsp://... or http://...)"
+              value={streamUrl}
+              onChange={(e) => setStreamUrl(e.target.value)}
+              className="stream-input"
+            />
+            <button className="analyze-btn" onClick={runAnalysis} disabled={analysisRunning || !streamUrl} type="button">
+              {analysisRunning ? 'ANALYSIS IN PROGRESS' : 'ANALYSE STREAM'}
+            </button>
           </div>
 
           <div className="feed-block">

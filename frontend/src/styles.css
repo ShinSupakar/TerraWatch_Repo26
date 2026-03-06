@@ -187,6 +187,28 @@ body,
   cursor: not-allowed;
 }
 
+.stream-input {
+  display: block;
+  width: 100%;
+  margin-top: 0.55rem;
+  padding: 0.55rem;
+  border: 1px solid #2a3339;
+  background: #141b20;
+  color: var(--text);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.9rem;
+}
+
+.stream-input::placeholder {
+  color: var(--muted);
+}
+
+.stream-input:focus {
+  outline: none;
+  border-color: var(--amber);
+  box-shadow: 0 0 8px #f7a53133;
+}
+
 .status-line {
   margin: 0.5rem 0 0;
   color: var(--muted);

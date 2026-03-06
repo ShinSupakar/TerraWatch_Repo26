@@ -240,6 +240,21 @@ class DamageResponse(BaseModel):
     notes: str
 
 
+class VideoDamageResponse(BaseModel):
+    video_id: str
+    frames_analyzed: int
+    frame_dimensions: tuple[int, int]
+    damage_boxes: list[DamageBox]
+    aggregated_counts: dict[str, int]
+    max_damage_class: int
+    causative_event_id: str | None
+    causative_magnitude: float | None
+    causative_depth_km: float | None
+    representative_frame_b64: str | None = None
+    overlay_image_b64: str | None = None
+    notes: str
+
+
 class SensorReading(BaseModel):
     sensor_id: str = Field(..., min_length=2, max_length=120)
     timestamp_utc: datetime
@@ -729,6 +744,170 @@ def draw_damage_overlay(img: np.ndarray, boxes: list[DamageBox]) -> np.ndarray:
         c = color_map.get(b.damage_class, (255, 255, 255))
         draw.rectangle((b.x1, b.y1, b.x2, b.y2), outline=c, width=3)
     return np.asarray(out, dtype=np.uint8)
+
+
+# ---------------------------------------------------------------------------
+# Video Frame Extraction & Processing
+# ---------------------------------------------------------------------------
+
+def extract_frames_from_video(
+    video_source: str | bytes,
+    sample_interval_sec: float = 1.0,
+    max_frames: int = 100,
+    is_file: bool = True,
+) -> tuple[list[np.ndarray], tuple[int, int]]:
+    """
+    Extract frames from a video source at approximately 1 frame per second.
+    
+    Args:
+        video_source: File path (str) or bytes buffer
+        sample_interval_sec: Target interval between frames in seconds (default 1.0)
+        max_frames: Maximum number of frames to extract (default 100)
+        is_file: True if video_source is a file path, False if bytes
+    
+    Returns:
+        Tuple of (frames list, frame dimensions as (height, width))
+    
+    Raises:
+        HTTPException: If video cannot be read or is invalid
+    """
+    try:
+        import cv2
+    except ImportError:
+        raise HTTPException(status_code=500, detail="OpenCV not installed on backend")
+    
+    cap = None
+    try:
+        if is_file:
+            cap = cv2.VideoCapture(video_source)
+        else:
+            # For bytes, write to temp file first
+            import tempfile
+            with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as tmp:
+                tmp.write(video_source)
+                tmp_path = tmp.name
+            cap = cv2.VideoCapture(tmp_path)
+        
+        if not cap.isOpened():
+            raise HTTPException(status_code=400, detail="Failed to open video file")
+        
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        
+        if frame_height <= 0 or frame_width <= 0:
+            raise HTTPException(status_code=400, detail="Invalid video dimensions")
+        
+        frames: list[np.ndarray] = []
+        frame_count = 0
+        sample_frame_count = max(1, int(sample_interval_sec * fps))
+        target_frame_idx = 0
+        
+        while len(frames) < max_frames:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            
+            # Sample at specified interval
+            if frame_count == target_frame_idx:
+                # Convert BGR to RGB
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                frames.append(frame_rgb)
+                target_frame_idx += sample_frame_count
+            
+            frame_count += 1
+        
+        if not frames:
+            raise HTTPException(status_code=400, detail="No frames could be extracted from video")
+        
+        return frames, (frame_height, frame_width)
+    
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Video frame extraction failed: %s", exc)
+        raise HTTPException(status_code=400, detail=f"Video processing error: {exc}")
+    finally:
+        if cap is not None:
+            cap.release()
+
+
+def process_video_frames(
+    frames: list[np.ndarray],
+    demo_fast: bool = True,
+    latitude: float | None = None,
+    longitude: float | None = None,
+) -> tuple[list[DamageBox], dict[str, int], int, np.ndarray]:
+    """
+    Process a list of video frames through the damage assessment pipeline.
+    Returns the worst-case damage assessment across all frames.
+    
+    Args:
+        frames: List of RGB numpy arrays
+        demo_fast: Whether to use fast inference mode
+        latitude: Optional latitude for event context
+        longitude: Optional longitude for event context
+    
+    Returns:
+        Tuple of (damage_boxes, aggregated_counts, max_damage_class, representative_frame)
+    """
+    if not frames:
+        raise ValueError("No frames provided")
+    
+    all_boxes: list[DamageBox] = []
+    max_damage_class_overall = 0
+    representative_frame_idx = 0
+    max_damage_count = 0
+    
+    for frame_idx, frame in enumerate(frames):
+        logger.debug(f"Processing video frame {frame_idx + 1}/{len(frames)}")
+        
+        # Prepare frame
+        img = downscale_for_realtime(frame)
+        
+        # Enhancement
+        if (not demo_fast) and state.image_enhancer is None:
+            enhancer, enhancer_source = load_image_enhancer()
+            state.image_enhancer = enhancer
+            state.image_enhancer_source = enhancer_source
+        
+        if (not demo_fast) and state.image_enhancer is not None:
+            try:
+                enhanced = esrgan_upscale(state.image_enhancer, img)
+            except Exception as exc:
+                logger.exception("ESRGAN enhancement failed on frame %d, using stub: %s", frame_idx, exc)
+                enhanced = esrgan_upscale_stub(img)
+        else:
+            enhanced = esrgan_upscale_stub(img)
+        
+        # Damage detection
+        if state.damage_detector is not None:
+            try:
+                boxes = yolo_damage_inference_fast(state.damage_detector, enhanced) if demo_fast else yolo_damage_inference(state.damage_detector, enhanced)
+            except Exception as exc:
+                logger.exception("YOLO inference failed on frame %d, using stub: %s", frame_idx, exc)
+                boxes = yolo_damage_inference_stub(enhanced)
+        else:
+            boxes = yolo_damage_inference_stub(enhanced)
+        
+        all_boxes.extend(boxes)
+        
+        # Track frame with worst damage
+        frame_damage_count = len([b for b in boxes if b.damage_class >= 2])
+        if frame_damage_count > max_damage_count or (frame_damage_count == max_damage_count and max(([b.damage_class for b in boxes], default=0))):
+            max_damage_count = frame_damage_count
+            representative_frame_idx = frame_idx
+        
+        max_class = max(([b.damage_class for b in boxes], default=0))
+        if max_class > max_damage_class_overall:
+            max_damage_class_overall = max_class
+    
+    # Aggregate counts across all frames
+    counts = {"no-damage": 0, "minor-damage": 0, "major-damage": 0, "destroyed": 0}
+    for b in all_boxes:
+        counts[b.damage_label] += 1
+    
+    return all_boxes, counts, max_damage_class_overall, frames[representative_frame_idx]
 
 
 def esrgan_upscale_stub(img: np.ndarray) -> np.ndarray:
@@ -1446,6 +1625,223 @@ async def api_damage(
             "type": "damage_assessment",
             "payload": {
                 "image_id": resp.image_id,
+                "aggregated_counts": resp.aggregated_counts,
+                "max_damage_class": resp.max_damage_class,
+                "causative_event_id": resp.causative_event_id,
+            },
+        }
+    )
+    return resp
+
+
+@app.post("/api/damage/video", response_model=VideoDamageResponse)
+async def api_damage_video(
+    video: UploadFile = File(...),
+    latitude: float | None = Form(default=None),
+    longitude: float | None = Form(default=None),
+    fast_mode: bool | None = Form(default=None),
+) -> VideoDamageResponse:
+    """
+    Process a video file for damage assessment.
+    Extracts frames at ~1 fps, runs damage pipeline on each,
+    and returns worst-case damage assessment.
+    
+    Supported formats: MP4, AVI, MOV
+    """
+    raw = await video.read()
+    if len(raw) == 0:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+    
+    # Validate video MIME type
+    content_type = video.content_type or ""
+    valid_types = {"video/mp4", "video/x-msvideo", "video/quicktime", "video/avi"}
+    if not any(vt in content_type.lower() for vt in valid_types):
+        logger.warning("Video uploaded with content-type: %s", content_type)
+    
+    demo_fast = DAMAGE_DEMO_FAST_DEFAULT if fast_mode is None else bool(fast_mode)
+    
+    # Extract frames from video bytes
+    frames, (frame_h, frame_w) = extract_frames_from_video(
+        raw,
+        sample_interval_sec=1.0,
+        max_frames=100,
+        is_file=False
+    )
+    
+    logger.info("Extracted %d frames from video", len(frames))
+    
+    # Process all frames through damage pipeline
+    all_boxes, counts, max_damage_class, representative_frame = process_video_frames(
+        frames,
+        demo_fast=demo_fast,
+        latitude=latitude,
+        longitude=longitude,
+    )
+    
+    # Get event context from catalog
+    async with state.catalog_lock:
+        ev_id, mag, depth = nearest_event_context(state.usgs_catalog, latitude, longitude)
+    
+    # Prepare response images
+    enhanced_rep = downscale_for_realtime(representative_frame)
+    overlay_img = draw_damage_overlay(enhanced_rep, all_boxes)
+    
+    resp = VideoDamageResponse(
+        video_id=str(uuid.uuid4()),
+        frames_analyzed=len(frames),
+        frame_dimensions=(frame_h, frame_w),
+        damage_boxes=all_boxes,
+        aggregated_counts=counts,
+        max_damage_class=max_damage_class,
+        causative_event_id=ev_id,
+        causative_magnitude=mag,
+        causative_depth_km=depth,
+        representative_frame_b64=image_to_jpeg_b64(enhanced_rep),
+        overlay_image_b64=image_to_jpeg_b64(overlay_img),
+        notes=(
+            f"fast_mode={demo_fast}; "
+            f"frames_analyzed={len(frames)}; "
+            f"Enhancer source={state.image_enhancer_source}; "
+            f"damage detector source={state.damage_detector_source}."
+        ),
+    )
+    
+    await state.connections.broadcast(
+        {
+            "type": "video_damage_assessment",
+            "payload": {
+                "video_id": resp.video_id,
+                "frames_analyzed": resp.frames_analyzed,
+                "aggregated_counts": resp.aggregated_counts,
+                "max_damage_class": resp.max_damage_class,
+                "causative_event_id": resp.causative_event_id,
+            },
+        }
+    )
+    return resp
+
+
+@app.post("/api/damage/stream", response_model=VideoDamageResponse)
+async def api_damage_stream(
+    stream_url: str = Form(..., min_length=10),
+    latitude: float | None = Form(default=None),
+    longitude: float | None = Form(default=None),
+    fast_mode: bool | None = Form(default=None),
+    frame_limit: int | None = Form(default=30),
+) -> VideoDamageResponse:
+    """
+    Process a live RTSP/HTTP stream URL for damage assessment.
+    Captures up to frame_limit frames at ~1 fps and runs damage pipeline.
+    
+    Supported stream types:
+    - RTSP: rtsp://192.168.x.x/stream
+    - HTTP MJPEG: http://192.168.x.x:8080/video.mjpeg
+    """
+    # Validate URL format
+    if not (stream_url.startswith("rtsp://") or stream_url.startswith("http://") or stream_url.startswith("https://")):
+        raise HTTPException(
+            status_code=400,
+            detail="Stream URL must start with rtsp://, http://, or https://"
+        )
+    
+    demo_fast = DAMAGE_DEMO_FAST_DEFAULT if fast_mode is None else bool(fast_mode)
+    max_frames = frame_limit or 30
+    
+    logger.info("Connecting to stream URL: %s", stream_url)
+    
+    # Extract frames from stream URL
+    try:
+        import cv2
+        cap = cv2.VideoCapture(stream_url)
+        
+        if not cap.isOpened():
+            raise HTTPException(status_code=400, detail="Failed to connect to stream URL")
+        
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        
+        if frame_height <= 0 or frame_width <= 0:
+            raise HTTPException(status_code=400, detail="Invalid stream dimensions")
+        
+        frames: list[np.ndarray] = []
+        frame_count = 0
+        sample_frame_count = max(1, int(1.0 * fps))  # 1 fps sampling
+        target_frame_idx = 0
+        
+        logger.info("Stream resolution: %dx%d, FPS: %.1f", frame_width, frame_height, fps)
+        
+        while len(frames) < max_frames:
+            ret, frame = cap.read()
+            if not ret:
+                logger.info("End of stream reached after %d frames", len(frames))
+                break
+            
+            # Sample at specified interval
+            if frame_count == target_frame_idx:
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                frames.append(frame_rgb)
+                target_frame_idx += sample_frame_count
+                logger.debug("Captured frame %d from stream", len(frames))
+            
+            frame_count += 1
+        
+        cap.release()
+        
+        if not frames:
+            raise HTTPException(status_code=400, detail="No frames captured from stream")
+        
+        logger.info("Captured %d frames from stream", len(frames))
+    
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Stream capture failed: %s", exc)
+        raise HTTPException(status_code=400, detail=f"Stream capture error: {exc}")
+    
+    # Process all frames through damage pipeline
+    all_boxes, counts, max_damage_class, representative_frame = process_video_frames(
+        frames,
+        demo_fast=demo_fast,
+        latitude=latitude,
+        longitude=longitude,
+    )
+    
+    # Get event context from catalog
+    async with state.catalog_lock:
+        ev_id, mag, depth = nearest_event_context(state.usgs_catalog, latitude, longitude)
+    
+    # Prepare response images
+    enhanced_rep = downscale_for_realtime(representative_frame)
+    overlay_img = draw_damage_overlay(enhanced_rep, all_boxes)
+    
+    resp = VideoDamageResponse(
+        video_id=str(uuid.uuid4()),
+        frames_analyzed=len(frames),
+        frame_dimensions=(frame_height, frame_width),
+        damage_boxes=all_boxes,
+        aggregated_counts=counts,
+        max_damage_class=max_damage_class,
+        causative_event_id=ev_id,
+        causative_magnitude=mag,
+        causative_depth_km=depth,
+        representative_frame_b64=image_to_jpeg_b64(enhanced_rep),
+        overlay_image_b64=image_to_jpeg_b64(overlay_img),
+        notes=(
+            f"fast_mode={demo_fast}; "
+            f"stream_url={stream_url}; "
+            f"frames_analyzed={len(frames)}; "
+            f"Enhancer source={state.image_enhancer_source}; "
+            f"damage detector source={state.damage_detector_source}."
+        ),
+    )
+    
+    await state.connections.broadcast(
+        {
+            "type": "stream_damage_assessment",
+            "payload": {
+                "video_id": resp.video_id,
+                "frames_analyzed": resp.frames_analyzed,
                 "aggregated_counts": resp.aggregated_counts,
                 "max_damage_class": resp.max_damage_class,
                 "causative_event_id": resp.causative_event_id,
