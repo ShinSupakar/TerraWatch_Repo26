@@ -83,7 +83,7 @@ MAX_DAMAGE_IMAGE_SIDE = int(os.getenv("MAX_DAMAGE_IMAGE_SIDE", "960"))
 DAMAGE_DEMO_FAST_DEFAULT = os.getenv("DAMAGE_DEMO_FAST_DEFAULT", "1") == "1"
 
 LIVE_CATALOG_HOURS = int(os.getenv("LIVE_CATALOG_HOURS", "48"))
-USGS_POLL_SECONDS = int(os.getenv("USGS_POLL_SECONDS", "180"))
+USGS_POLL_SECONDS = int(os.getenv("USGS_POLL_SECONDS", "60"))
 
 MMI_THREAT_MAP = [
     (5.0, "Light"),
@@ -1533,6 +1533,92 @@ async def api_shakemap(req: ShakeMapFetchRequest) -> ShakeMapResponse:
     polys = synthetic_shakemap_polygons(ev)
     return ShakeMapResponse(event_id=req.event_id, polygons=polys, source="synthetic_stub")
 
+@app.get("/api/shakemap/latest")
+async def api_shakemap_latest() -> dict[str, Any]:
+    events = state.live_events
+    m5_events = [e for e in events if float(e.get("mag", 0.0)) >= 5.0]
+    if not m5_events:
+        return {"status": "no_recent_events"}
+    
+    latest = m5_events[-1]
+    event_id = str(latest["id"])
+    
+    polys = synthetic_shakemap_polygons(latest)
+    impact = estimate_impact(event_id=event_id, polygons=polys)
+    
+    return {
+        "status": "success",
+        "event": json_safe(latest),
+        "impact": impact.model_dump()
+    }
+
+@app.get("/api/shakemap/{event_id}")
+async def api_shakemap_grid(event_id: str) -> dict[str, Any]:
+    async with state.catalog_lock:
+        df = state.usgs_catalog.copy()
+    row = df[df["id"] == event_id]
+    if row.empty:
+        # Check live events
+        live_matches = [e for e in state.live_events if e["id"] == event_id]
+        if live_matches:
+            lat = float(live_matches[0]["latitude"])
+            lon = float(live_matches[0]["longitude"])
+            mag = float(live_matches[0]["mag"])
+        else:
+            raise HTTPException(status_code=404, detail=f"Event {event_id} not found")
+    else:
+        lat = float(row.iloc[0]["latitude"])
+        lon = float(row.iloc[0]["longitude"])
+        mag = float(row.iloc[0]["mag"])
+
+    # Generate synthetic GeoJSON grid representing shaking x WorldPop density
+    features = []
+    grid_size = 0.05 # roughly 5km
+    radius = int(math.ceil(mag)) * 2
+    
+    for i in range(-radius, radius + 1):
+        for j in range(-radius, radius + 1):
+            clat = lat + i * grid_size
+            clon = lon + j * grid_size
+            
+            # Simple distance-based intensity
+            dist = math.sqrt(i*i + j*j)
+            if dist > radius:
+                continue
+                
+            intensity = max(0, mag - (dist * 0.5))
+            if intensity < 3.0:
+                continue
+                
+            # Synthetic worldpop data correlation
+            pop_density = random.randint(10, 5000)
+            affected = int((intensity ** 2) * pop_density * 0.1)
+            
+            # GeoJSON polygon for this cell
+            poly = [
+                [clon - grid_size/2, clat - grid_size/2],
+                [clon + grid_size/2, clat - grid_size/2],
+                [clon + grid_size/2, clat + grid_size/2],
+                [clon - grid_size/2, clat + grid_size/2],
+                [clon - grid_size/2, clat - grid_size/2]
+            ]
+            
+            features.append({
+                "type": "Feature",
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [poly]
+                },
+                "properties": {
+                    "intensity": intensity,
+                    "population_affected": affected
+                }
+            })
+            
+    return {
+        "type": "FeatureCollection",
+        "features": features
+    }
 
 @app.post("/api/impact/{event_id}", response_model=ImpactAssessmentResponse)
 async def api_impact(event_id: str) -> ImpactAssessmentResponse:

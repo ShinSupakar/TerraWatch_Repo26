@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { saveReportOffline, syncOfflineReports } from './offlineSync';
+import { ShakeMapViewer } from './ShakeMapViewer';
+
 
 const INCIDENTS = [
   {
@@ -163,6 +165,27 @@ function App() {
       setCountdownSec((prev) => Math.max(0, prev - 1));
     }, 1000);
     return () => clearInterval(timer);
+  }, []);
+
+  // Seed ShakeMap from latest M5+ event on mount
+  useEffect(() => {
+    fetch('/api/shakemap/latest')
+      .then(r => r.json())
+      .then(d => {
+        if (d.status === 'success' && d.event) {
+          const e = d.event;
+          const polys = [];
+          setShakeMap({
+            event_id: e.id,
+            source: 'usgs_live',
+            event_place: e.place,
+            event_mag: e.mag,
+            polygons: polys,
+          });
+          if (d.impact) setImpact(d.impact);
+        }
+      })
+      .catch(() => { });
   }, []);
 
   useEffect(() => {
@@ -787,6 +810,13 @@ function App() {
             <span>Aftershock Horizon: 24h</span>
             <span>{refineLabel}</span>
           </div>
+
+          <ShakeMapViewer
+            eventId={shakeMap?.event_id}
+            eventPlace={shakeMap?.event_place}
+            eventMag={shakeMap?.event_mag}
+            impactStr={impact?.exposed_population_estimate ? Number(impact.exposed_population_estimate).toLocaleString() : null}
+          />
         </section>
 
         <section className="panel right-panel">

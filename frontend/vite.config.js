@@ -11,18 +11,12 @@ export default defineConfig({
         name: 'TerraWatch Offline Responder',
         short_name: 'TerraWatch',
         description: 'Offline-First PWA for field responders to submit GPS-tagged damage reports.',
-        theme_color: '#ffffff',
+        theme_color: '#0d1117',
+        background_color: '#0d1117',
+        display: 'standalone',
         icons: [
-          {
-            src: 'icon-192x192.png',
-            sizes: '192x192',
-            type: 'image/png'
-          },
-          {
-            src: 'icon-512x512.png',
-            sizes: '512x512',
-            type: 'image/png'
-          }
+          { src: 'icon-192x192.png', sizes: '192x192', type: 'image/png' },
+          { src: 'icon-512x512.png', sizes: '512x512', type: 'image/png' }
         ]
       },
       workbox: {
