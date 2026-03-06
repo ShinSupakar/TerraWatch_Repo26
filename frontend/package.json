@@ -9,8 +9,10 @@
     "preview": "vite preview --host 0.0.0.0 --port 4173"
   },
   "dependencies": {
+    "idb": "^8.0.3",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "vite-plugin-pwa": "^1.2.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.4.1",

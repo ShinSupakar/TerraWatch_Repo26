@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { saveReportOffline, syncOfflineReports } from './offlineSync';
 
 const INCIDENTS = [
   {
@@ -120,6 +121,8 @@ function App() {
   const [damageSummary, setDamageSummary] = useState(null);
   const [shakeMap, setShakeMap] = useState(null);
   const [impact, setImpact] = useState(null);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [reportDesc, setReportDesc] = useState('');
 
   const wsRef = useRef(null);
   const selectedIncident = useMemo(
@@ -160,6 +163,24 @@ function App() {
       setCountdownSec((prev) => Math.max(0, prev - 1));
     }, 1000);
     return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    const handleOnline = async () => {
+      setIsOnline(true);
+      const syncedCount = await syncOfflineReports();
+      if (syncedCount > 0) {
+        setEventFeed((prev) => [`${new Date().toLocaleTimeString()} | Synced ${syncedCount} offline reports`, ...prev].slice(0, 10));
+      }
+    };
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
   }, []);
 
   useEffect(() => {
@@ -366,10 +387,10 @@ function App() {
         idx === 0
           ? 'IMMEDIATE RESCUE'
           : idx === 1
-          ? 'HIGH PRIORITY'
-          : total > 0
-          ? 'STABILIZE'
-          : 'ASSESSMENT NEEDED',
+            ? 'HIGH PRIORITY'
+            : total > 0
+              ? 'STABILIZE'
+              : 'ASSESSMENT NEEDED',
     }));
   }
 
@@ -397,6 +418,40 @@ function App() {
       const imp = await impactRes.json();
       setImpact(imp);
     }
+  }
+
+  async function submitFieldReport() {
+    if (!reportDesc.trim()) return;
+
+    const payload = {
+      description: reportDesc,
+      latitude: selectedIncident.lat,
+      longitude: selectedIncident.lon,
+    };
+
+    if (isOnline) {
+      try {
+        const formData = new FormData();
+        formData.append('description', payload.description);
+        formData.append('latitude', String(payload.latitude));
+        formData.append('longitude', String(payload.longitude));
+
+        const res = await fetch(`${API_BASE}/api/report`, {
+          method: 'POST',
+          body: formData,
+        });
+        if (!res.ok) throw new Error('API failed');
+        setEventFeed((prev) => [`${new Date().toLocaleTimeString()} | Field Report submitted`, ...prev].slice(0, 10));
+      } catch (err) {
+        await saveReportOffline(payload);
+        setEventFeed((prev) => [`${new Date().toLocaleTimeString()} | Offline - Report queued`, ...prev].slice(0, 10));
+      }
+    } else {
+      await saveReportOffline(payload);
+      setEventFeed((prev) => [`${new Date().toLocaleTimeString()} | Offline - Report queued`, ...prev].slice(0, 10));
+    }
+
+    setReportDesc('');
   }
 
   async function runAnalysis() {
@@ -429,7 +484,7 @@ function App() {
       // Determine which damage endpoint to use
       const damageCall = videoFile ? callDamageVideo({ fast: true, timeoutMs: 30000 }) :
         streamUrl ? callDamageStream({ fast: true, timeoutMs: 45000 }) :
-        callDamage({ fast: true, timeoutMs: 12000 });
+          callDamage({ fast: true, timeoutMs: 12000 });
 
       const [worstCaseResult, aftershockResult, damageResult] = await Promise.allSettled([
         callWorstCase(),
@@ -560,13 +615,13 @@ function App() {
     !ENABLE_REFINEMENT
       ? 'Overlay: FAST only'
       :
-    refineStatus === 'running'
-      ? 'Overlay: FAST (refining...)'
-      : refineStatus === 'done'
-      ? 'Overlay: ESRGAN refined'
-      : refineStatus === 'failed'
-      ? 'Overlay: FAST (refinement failed)'
-      : 'Overlay: idle';
+      refineStatus === 'running'
+        ? 'Overlay: FAST (refining...)'
+        : refineStatus === 'done'
+          ? 'Overlay: ESRGAN refined'
+          : refineStatus === 'failed'
+            ? 'Overlay: FAST (refinement failed)'
+            : 'Overlay: idle';
 
   return (
     <div className="app-shell">
@@ -646,6 +701,21 @@ function App() {
             </button>
           </div>
 
+          <div className="upload-block">
+            <h3>Field Report (PWA Offline)</h3>
+            <textarea
+              placeholder="E.g., Block 43 Jurong West — major structural damage"
+              value={reportDesc}
+              onChange={(e) => setReportDesc(e.target.value)}
+              className="stream-input"
+              rows={3}
+              style={{ width: '100%', marginBottom: '10px', background: 'transparent', color: '#fff' }}
+            />
+            <button className="analyze-btn" onClick={submitFieldReport} disabled={!reportDesc} type="button">
+              {isOnline ? 'SUBMIT REPORT (ONLINE)' : 'QUEUE REPORT (OFFLINE)'}
+            </button>
+          </div>
+
           <div className="feed-block">
             <h3>Live Feed</h3>
             <div className="feed-list">
@@ -679,13 +749,21 @@ function App() {
             <div className="img-block">
               <h3>Before</h3>
               <div className="img-stage">
-                <img src={beforeImage} alt="before" />
+                {videoPreview && !uploadedPreview ? (
+                  <video src={videoPreview} controls loop muted style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                ) : (
+                  <img src={beforeImage} alt="before" />
+                )}
               </div>
             </div>
             <div className="img-block">
               <h3>After + Detection Overlay</h3>
               <div className="img-stage overlay-stage">
-                <img src={afterImage} alt="after" />
+                {videoPreview && !uploadedPreview && !processedImage ? (
+                  <video src={videoPreview} controls loop muted style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                ) : (
+                  <img src={afterImage} alt="after" />
+                )}
                 {damageBoxes.map((box) => (
                   <div
                     key={box.id}
