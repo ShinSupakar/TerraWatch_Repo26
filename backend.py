@@ -13,18 +13,25 @@ import uuid
 from collections import deque
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Deque, Literal
+from typing import TYPE_CHECKING, Any, Deque, Literal
+
+if TYPE_CHECKING:
+    import torch
+    from PIL import Image
+    import cv2
 
 import httpx
 import numpy as np
 import pandas as pd
+
 if os.getenv("DISABLE_TORCH", "0") == "1":
-    torch = None  # type: ignore[assignment]
+    torch = None
 else:
     try:
         import torch
-    except Exception:  # pragma: no cover - runtime fallback for constrained envs
-        torch = None  # type: ignore[assignment]
+    except ImportError:
+        torch = None
+
 from fastapi import (
     FastAPI,
     File,
@@ -1970,11 +1977,12 @@ async def api_sensor(reading: SensorReading) -> SensorAck:
 
 @app.post("/api/report", response_model=ReportResponse)
 async def api_report(
-    description: str = Form(..., min_length=3, max_length=5000),
+    description: str = Form(..., min_length=1, max_length=5000),
     latitude: float = Form(..., ge=-90.0, le=90.0),
     longitude: float = Form(..., ge=-180.0, le=180.0),
     photo: UploadFile | None = File(default=None),
 ) -> ReportResponse:
+    logger.info("Report POST: desc=%s, lat=%s, lon=%s", description[:20], latitude, longitude)
     report_id = str(uuid.uuid4())
     reports_dir = DATA_DIR / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
@@ -2053,6 +2061,16 @@ async def api_layman_summary(req: LaymanSummaryRequest) -> LaymanSummaryResponse
     return response
 
 
+from fastapi.exceptions import RequestValidationError
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request, exc):
+    logger.error("422 Validation Error: %s", exc.errors())
+    return JSONResponse(
+        status_code=422,
+        content={"detail": exc.errors(), "body": str(exc)},
+    )
+
 # ---------------------------------------------------------------------------
 # Frontend Hosting (React build served by FastAPI)
 # ---------------------------------------------------------------------------
@@ -2076,12 +2094,23 @@ async def frontend_index() -> FileResponse | JSONResponse:
 
 @app.get("/{full_path:path}", response_model=None)
 async def frontend_spa_fallback(full_path: str) -> FileResponse | JSONResponse:
+    # 1. Check if the file actually exists in the frontend dist directory 
+    # (manifest.webmanifest, sw.js, workbox-*.js, icons, etc.)
+    target_file = FRONTEND_DIST_DIR / full_path
+    if target_file.exists() and target_file.is_file():
+        # Prevent accidentaly serving index.html twice here
+        if full_path != "index.html":
+            return FileResponse(target_file)
+
+    # 2. Block direct API/WS/Assets 404s
     if full_path.startswith("api/") or full_path.startswith("ws/") or full_path.startswith("assets/"):
         raise HTTPException(status_code=404, detail="Not Found")
 
+    # 3. Handle SPA routing: all other non-file paths return index.html
     index_file = FRONTEND_DIST_DIR / "index.html"
     if index_file.exists():
         return FileResponse(index_file)
+    
     return JSONResponse(
         status_code=404,
         content={
