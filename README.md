@@ -5,39 +5,42 @@ TerraWatch is a high-fidelity disaster response system designed to provide actio
 
 ---
 
-## � Architecture Overview
+## Architecture Overview
 TerraWatch uses a multi-layered architecture designed for resilience in low-connectivity environments.
 
 ```mermaid
 graph TD
-    subgraph "Field / Edge (PWA)"
-        A[Offline Field Report] --> B(IndexedDB Queue)
-        B --> C{Online?}
-        C -- Yes --> D[API Sync - /api/report]
-    }
 
-    subgraph "Data Ingest (Backend)"
-        E[Live CCTV Feed] -- Socket/Video --> F[FastAPI /api/damage/video]
-        G[USGS ComCat] -- Poll 60s --> H[Geophysics Hazard Engine]
-        I[WorldPop Rasters] -- Overlay --> J[Exposure Assessment]
-    }
+    subgraph Field_Edge_PWA["Field / Edge (PWA)"]
+        A["Offline Field Report"] --> B["IndexedDB Queue"]
+        B --> C{"Online?"}
+        C -- Yes --> D["API Sync: /api/report"]
+    end
 
-    subgraph "AI Inference Layer"
-        D & F --> K[YOLOv8 Damage Detection]
-        H --> L[Aftershock Transformer]
-        K --> M[ESRGAN Super-Res]
-    }
+    subgraph Data_Ingest_Backend["Data Ingest (Backend)"]
+        E["Live CCTV Feed"] -->|Socket/Video| F["FastAPI: /api/damage/video"]
+        G["USGS ComCat"] -->|Poll 60s| H["Geophysics Hazard Engine"]
+        I["WorldPop Rasters"] -->|Overlay| J["Exposure Assessment"]
+    end
 
-    subgraph "Command HQ Dashboard"
-        J & L & M --> N[Real-time Leaflet Map]
-        N --> O[Rescue Priority Queue]
-        O --> P[Layman Public Brief]
-    }
+    subgraph AI_Inference_Layer["AI Inference Layer"]
+        D --> K["YOLOv8 Damage Detection"]
+        F --> K
+        H --> L["Aftershock Transformer"]
+        K --> M["ESRGAN Super-Res"]
+    end
+
+    subgraph Command_HQ_Dashboard["Command HQ Dashboard"]
+        J --> N["Real-time Leaflet Map"]
+        L --> N
+        M --> N
+        N --> O["Rescue Priority Queue"]
+        O --> P["Layman Public Brief"]
+    end
 ```
-
 ---
 
-## ⏳ Evolution of Response: The Four Stages
+## Evolution of Response: The Four Stages
 TerraWatch is designed to scale its data confidence as an incident progresses through four distinct operational stages:
 
 | **Stage** | **Timeframe** | **Data Source** | **Visualized Content** | **Confidence Label** |
@@ -49,7 +52,7 @@ TerraWatch is designed to scale its data confidence as an incident progresses th
 
 ---
 
-## 📁 Project Structure
+## Project Structure
 ```text
 .
 ├── backend.py                   # FastAPI / AI Logic
@@ -72,27 +75,27 @@ TerraWatch is designed to scale its data confidence as an incident progresses th
 
 ---
 
-## �🚀 Key Platform Features
+## Key Platform Features
 
-### 1. ⚡ Live ShakeMap & Demographic Exposure (Real-Time)
+### 1. Live ShakeMap & Demographic Exposure (Real-Time)
 - **Automatic Polling:** Background tasks monitor the USGS ComCat feed every 60s for new M5+ events.
 - **Dynamic Shaking Overlays:** Automatically fetches/generates ShakeMap grids.
 - **WorldPop Integration:** Cross-references intensity polygons with global 100m population density data to estimate people exposed in minutes.
 - **Interactive Heatmap:** Custom Leaflet-powered engine renders seismic intensity as color-coded polygons.
 
-### 2. 📹 CCTV & Video Damage Assessment (Computer Vision)
+### 2. CCTV & Video Damage Assessment (Computer Vision)
 - **Multimodal Inference:** Upload Recorded CCTV footage to detect structural damage.
 - **YOLOv8n Triage:** Identifies `Destroyed`, `Major Damage`, and `Minor Damage` to feed the Rescue Priority Queue.
 - **Demo Assets:** Pre-rendered footage from Turkey, Nepal, and Japan included.
 
-### 3. 📵 Offline-First PWA (Resilient Field Mode)
+### 3. Offline-First PWA (Resilient Field Mode)
 - **Installable Native UI:** Standalone PWA experience (Installable to Home Screen).
 - **IndexedDB Sync Engine:** Queue damage reports in "Signal-Zero" zones that automatically synchronize upon connection return.
 - **Service Worker Caching:** Zero-latency UI loading during network collapse.
 
 ---
 
-## 🏗 System Architecture & Design Choices
+## System Architecture & Design Choices
 - **Design Philosophy: Resilience by Design**: Every AI component is designed with a "Deterministic Fallback" mode. If weights (YOLO, ESRGAN) are missing, the backend switches to physics-based stubs, ensuring CQHQ never goes blind.
 - **Tech Stack**:
   - **Backend**: FastAPI, Asyncio, Httpx.
@@ -101,34 +104,105 @@ TerraWatch is designed to scale its data confidence as an incident progresses th
 
 ---
 
-## 🐳 Quick Start (Docker)
+## Quick Start (Docker)
+
+> **Pre‑build step:** ensure the weight files exist locally. Run the asset
+> checker (which will auto‑fetch the ESRGAN model if missing) or invoke the
+> fetch script directly:
+>
+> ```bash
+> bash scripts/check_assets.py   # or: bash scripts/fetch_weights.sh
+> ```
+>
+> The Dockerfile copies these files into the image, so the build will fail if
+> they are absent.
 
 ```bash
-# Ensure weights exist locally
-bash scripts/check_assets.py
 docker compose up --build
 ```
-- **Backend/Frontend Root:** `http://localhost:8000`
-- **Health Check:** `GET /health`
+
+Backend URL:
+
+- `http://localhost:8000`
+- Frontend URL (served by FastAPI): `http://localhost:8000/`
+
+Health check:
+
+- `GET http://localhost:8000/health`
+
+Docker image now bundles:
+- frontend static build (`frontend/dist`)
+- `aftershock_transformer_scripted.pt`
+- YOLO weights (`terrawatch/models/.../weights/best.pt`)
+- Real-ESRGAN weights (`terrawatch/RealESRGAN_x4plus.pth`)
+
+So a single `docker compose up --build` is enough for uniform evaluator setup.
 
 ---
 
-## 💻 Local Run in VS Code (Recommended)
+## Local Run in VS Code (Recommended)
 1. Open root folder.
 2. Setup Venv & Install Deps (`requirements.txt`).
 3. Run `start_all.sh` to launch both servers.
 4. **Open `http://127.0.0.1:5173`**
 
+### Required Model/Data Asset Locations
+
+- `./aftershock_transformer_scripted.pt` (aftershock TorchScript model)
+- `./terrawatch/models/enhanced_yolov8n/weights/best.pt` (preferred detector)
+- `./terrawatch/models/baseline_yolov8n/weights/best.pt` (fallback detector)
+
+> **Note:** `RealESRGAN_x4plus.pth` is large (~**25 MB**) and is **not** checked into
+> version control. The backend will operate with a lightweight stub if it is absent.
+> You can obtain the file in one of three ways:
+>
+> 1. Run the helper script included in the repo:
+>    ```bash
+>    bash scripts/fetch_weights.sh
+>    ```
+>    (it uses `curl`/`wget` and honours `ESRGAN_URL` for alternative sources)
+> 2. Download manually from the
+>    [Real-ESRGAN release page](https://github.com/xinntao/Real-ESRGAN/releases)
+>    (look for `RealESRGAN_x4plus.pth`) and place it in `./terrawatch/`
+> 3. Set the environment variable `ESRGAN_WEIGHTS_PATH` to wherever you saved it.
+>
+> The `.env.example` includes that variable with a default pointing inside `terrawatch`.
+> Modify it if you keep the file elsewhere.
+
+### Convenience scripts
+
+* `scripts/check_assets.py` – verifies required/optional models and hints about
+  missing weights (invokes fetch script when helpful).
+* `scripts/fetch_weights.sh` – downloads Real-ESRGAN weights; run it before
+  starting the service or as part of `./start_all.sh`.
+
+### Optional / training assets
+
+- `./aftershock_transformer.pt`
+- `./best_transformer.pt`
+- etc. (see `scripts/check_assets.py`)
+
 ---
 
-## ⚙️ Environment Variables
+## Environment Variables
 - `USGS_POLL_SECONDS` (default: `60`) - Real-time polling frequency.
 - `LIVE_CATALOG_HOURS` (default: `48`) - Historical seismicity window.
-- `ESRGAN_WEIGHTS_PATH` - Path to Super-Res model.
-
+- `ESRGAN_WEIGHTS_PATH` (default: `./terrawatch/RealESRGAN_x4plus.pth`)
+- `LOG_LEVEL` (default: `INFO`)
+- `TERRAWATCH_DATA_DIR` (default: `./data`)
+- `USGS_CACHE_CSV` (default: `./data/usgs_catalog.csv`)
+- `AFTERSHOCK_MODEL_PATH` (default: `./aftershock_transformer_scripted.pt`)
+- `TERRAWATCH_MODEL_ROOT` (default: `./terrawatch/models`)
+- `YOLO_RUNS_DIR` (default: `./runs/detect`)
+- `YOLO_WEIGHTS_PATH` (default: auto-discovery)
+- `YOLO_CONF_THRESHOLD` (default: `0.25`)
+- `YOLO_IOU_THRESHOLD` (default: `0.45`)
+- `YOLO_IMAGE_SIZE` (default: `640`)
+- `ESRGAN_SCALE` (default: `4`)
+- `ESRGAN_OUTSCALE` (default: `2.0`)
 ---
 
-## 📡 Key API Endpoints
+## Key API Endpoints
 - `GET /api/shakemap/latest`: Returns current seismic event + impact.
 - `GET /api/shakemap/{event_id}`: Returns intensity grid × population.
 - `POST /api/damage/video`: Uploads CCTV for structural triage.
@@ -136,18 +210,18 @@ docker compose up --build
 
 ---
 
-## 🛡 Resilient Implementation & Fallbacks
+## Resilient Implementation & Fallbacks
 - **Feature Robustness**: If the YOLO model fails to load, the backend switches to a **Deterministic Demo Output** so the UI remains functional.
 - **PWA Offlining**: The Workbox service worker will serve cached content if the backend is unreachable.
 
 ---
 
-## 🏗 Future Production Scaling
+## Future Production Scaling
 - **Raster Integration**: Moving from stubs to live WorldPop API cell lookups.
 - **LLM Safety Briefs**: Integrating Llama 3 on-edge for localized risk summaries based on intensity.
 
-## 🧪 Testbench
+## Testbench
 Required testing documentation found in `testbench/`.
 
 ---
-*TerraWatch — Scaling response beyond the signal.*
+
